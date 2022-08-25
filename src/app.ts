@@ -1,3 +1,25 @@
+interface Validatable {
+  value: string | number;
+  required?: boolean;
+  minLength?: number;
+  maxLength?: number;
+  max?: number;
+  min?: number;
+}
+
+interface Draggable {
+  element: HTMLElement;
+
+  dragStartHandler(event: DragEvent): void;
+  dragEndHandler(event: DragEvent): void;
+}
+
+interface DragTarget {
+  dragOverHandler(event: DragEvent): void;
+  dropHandler(event: DragEvent): void;
+  dragLeaveHandler(event: DragEvent): void;
+}
+
 enum ProjectStatus {
   Active,
   Finished,
@@ -11,15 +33,6 @@ class Project {
     public people: number,
     public status: ProjectStatus
   ) {}
-}
-
-interface Validatable {
-  value: string | number;
-  required?: boolean;
-  minLength?: number;
-  maxLength?: number;
-  max?: number;
-  min?: number;
 }
 
 type Listener = (items: Project[]) => void;
@@ -49,7 +62,19 @@ class ProjectState {
       ProjectStatus.Active
     );
     this.projects.push(newProject);
+    this.updateListeners();
+  }
 
+  moveProject(projectId: string, newStatus: ProjectStatus) {
+    const project = this.projects.find((proj) => proj.id === projectId);
+
+    if (project && project.status !== newStatus) {
+      project.status = newStatus;
+      this.updateListeners();
+    }
+  }
+
+  private updateListeners() {
     for (const listenerFn of this.listeners) {
       listenerFn(this.projects.slice());
     }
@@ -58,46 +83,6 @@ class ProjectState {
   addListener(listenerFn: Listener) {
     this.listeners.push(listenerFn);
   }
-}
-
-function validate(validatableInput: Validatable) {
-  let isValid = true;
-
-  if (validatableInput.required) {
-    isValid = isValid && validatableInput.value.toString().trim().length !== 0;
-  }
-
-  if (
-    validatableInput.minLength != null &&
-    typeof validatableInput.value === "string"
-  ) {
-    isValid =
-      isValid && validatableInput.value.length > validatableInput.minLength;
-  }
-
-  if (
-    validatableInput.maxLength != null &&
-    typeof validatableInput.value === "string"
-  ) {
-    isValid =
-      isValid && validatableInput.value.length < validatableInput.maxLength;
-  }
-
-  if (
-    validatableInput.min != null &&
-    typeof validatableInput.value === "number"
-  ) {
-    isValid = isValid && validatableInput.value > validatableInput.min;
-  }
-
-  if (
-    validatableInput.max != null &&
-    typeof validatableInput.value === "number"
-  ) {
-    isValid = isValid && validatableInput.value < validatableInput.max;
-  }
-
-  return isValid;
 }
 
 abstract class Component<T extends HTMLElement, U extends HTMLElement> {
@@ -138,7 +123,10 @@ abstract class Component<T extends HTMLElement, U extends HTMLElement> {
   abstract renderContent(): void;
 }
 
-class ProjectItem extends Component<HTMLUListElement, HTMLLIElement> {
+class ProjectItem
+  extends Component<HTMLUListElement, HTMLLIElement>
+  implements Draggable
+{
   private project: Project;
 
   private get persons() {
@@ -155,7 +143,20 @@ class ProjectItem extends Component<HTMLUListElement, HTMLLIElement> {
     this.renderContent();
   }
 
-  configure() {}
+  dragStartHandler(event: DragEvent) {
+    event.dataTransfer!.setData("text/plain", this.project.id);
+    event.dataTransfer!.effectAllowed = "move";
+  }
+
+  dragEndHandler(_: DragEvent) {}
+
+  configure() {
+    this.element.addEventListener(
+      "dragstart",
+      this.dragStartHandler.bind(this)
+    );
+    this.element.addEventListener("dragend", this.dragStartHandler.bind(this));
+  }
 
   renderContent() {
     const { title, description } = this.project;
@@ -165,7 +166,10 @@ class ProjectItem extends Component<HTMLUListElement, HTMLLIElement> {
   }
 }
 
-class ProjectList extends Component<HTMLDivElement, HTMLElement> {
+class ProjectList
+  extends Component<HTMLDivElement, HTMLElement>
+  implements DragTarget
+{
   assignedProjects: Project[];
 
   constructor(private type: "active" | "finished") {
@@ -189,7 +193,34 @@ class ProjectList extends Component<HTMLDivElement, HTMLElement> {
     }
   }
 
+  dragOverHandler(event: DragEvent) {
+    if (event.dataTransfer && event.dataTransfer.types[0] === "text/plain") {
+      event.preventDefault();
+      const listEl = this.element.querySelector("ul")!;
+      listEl.classList.add("droppable");
+    }
+  }
+  dropHandler(event: DragEvent) {
+    const projId = event.dataTransfer!.getData("text/plain");
+    projectState.moveProject(
+      projId,
+      this.type === "active" ? ProjectStatus.Active : ProjectStatus.Finished
+    );
+  }
+
+  dragLeaveHandler(_: DragEvent) {
+    const listEl = this.element.querySelector("ul")!;
+    listEl.classList.remove("droppable");
+  }
+
   configure() {
+    this.element.addEventListener("dragover", this.dragOverHandler.bind(this));
+    this.element.addEventListener("drop", this.dropHandler.bind(this));
+    this.element.addEventListener(
+      "dragleave",
+      this.dragLeaveHandler.bind(this)
+    );
+
     projectState.addListener((projects: Project[]) => {
       const relevantProjects = projects.filter((proj) => {
         if (this.type === "active") {
@@ -290,6 +321,46 @@ class Input extends Component<HTMLDivElement, HTMLFormElement> {
   }
 
   renderContent() {}
+}
+
+function validate(validatableInput: Validatable) {
+  let isValid = true;
+
+  if (validatableInput.required) {
+    isValid = isValid && validatableInput.value.toString().trim().length !== 0;
+  }
+
+  if (
+    validatableInput.minLength != null &&
+    typeof validatableInput.value === "string"
+  ) {
+    isValid =
+      isValid && validatableInput.value.length > validatableInput.minLength;
+  }
+
+  if (
+    validatableInput.maxLength != null &&
+    typeof validatableInput.value === "string"
+  ) {
+    isValid =
+      isValid && validatableInput.value.length < validatableInput.maxLength;
+  }
+
+  if (
+    validatableInput.min != null &&
+    typeof validatableInput.value === "number"
+  ) {
+    isValid = isValid && validatableInput.value > validatableInput.min;
+  }
+
+  if (
+    validatableInput.max != null &&
+    typeof validatableInput.value === "number"
+  ) {
+    isValid = isValid && validatableInput.value < validatableInput.max;
+  }
+
+  return isValid;
 }
 
 const projectState = ProjectState.getInstance();
